@@ -1,0 +1,2540 @@
+---
+title: "17_full_manuscript_analysis"
+author: "Deidre Jaeger"
+date: "6/22/2021"
+output: html_document
+---
+
+Contents
+1. Dominant period of sensors
+  1.1. ORE Al100.1
+  1.2. ORE Al100.2
+  1.3. GCD 1.1
+  1.4. GCD 1.2
+  1.5. GCD 2.1
+  1.6. GCD 2.2
+2. Timelapse Green Chromatic Coordinate
+  2.1 Tree 1.1
+  2.2 Tree 2.1
+  2.3 Tree 1.2
+  2.4 Tree 2.2
+  2.5 Tree 1.3
+  2.6 Tree 2.3
+3. Accel-pheno comparison
+  3.1 look at t-tests
+  3.2 Calc Means and SDs by sensor type
+  3.3 scatterplot of julian dates timelapse accel comparison
+4. Means and Sds for sensors and trees
+5. Table 3.1 visual comparison
+6. Unit comparison
+  6.1 t.tests and means for dom period betwen units OyGz
+  6.2 calc the St deviations of dominant periods between units opposing axes
+7. Height comparison
+  7.1 Height comparisons Y axis
+  7.2 Height comparisons Z axis
+8. FLowering comparison
+  8.1 AL.1_2018
+  8.2 AL.2_2018
+  8.3 1.1_2018
+  8.4 1.2_2018
+  8.5 2.1_2018
+  8.6 2.2_2018
+
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+# install.packages("phenopix")
+library(phenopix)
+# install.packages("rasterImage")
+library(rasterImage)
+library(jpeg)
+library(rgdal) # seems to be necessary for `extractVIs` function, but Kelsey hasn't figured out why yet
+library(zoo)
+# install.packages("tseries")
+library(tseries)
+library(reshape2)
+library(strucchange)
+library(ggplot2)
+# install.packages("cowplot")
+library(cowplot)
+library(scales)
+
+# for correlations
+library("ggpubr")
+
+```
+
+```{r load-functions}
+
+
+#' Remove outliers from a dominant period series
+#'
+#' This function removes outliers from a dominant period series, based residuals of a loess curve.  Returns the same data frame, but with NA's in rows of outliers.
+#' @param dat A 'long form' data frame with three columns: 'day', 'value', and 'weights'. Value is the dominant period.
+#' @keywords 
+#' @export
+#' @examples
+#' rmOut()
+
+
+
+#Removes outliers from dominant period series
+#dat is 'long form' data frame with three columns named: "day","value", and "weights". Value is the dominant period
+#Returns the same dataframe, but with NA's in rows of outliers
+rmOut <- function(dat){
+  ###Finding outliers
+  #Fits loess curve
+  loessMod <- loess(value ~ day, data=dat, family="symmetric", weights=dat$weights^2)
+  
+  #Gets residuals
+  resid <- residuals(loessMod)
+  
+  #Plots the data and loess curve
+  #plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+  #points(dat$day, fitted(loessMod), col="purple", pch=20)
+  
+  #Determines the interquartile range of residual values
+  resid.q <- quantile(resid,prob=c(0.25,0.75))
+  iqr <- diff(resid.q)
+  
+  #Calculates 1.5*interquartile range, and determines limits
+  limits <- resid.q + 1.5*iqr*c(-1,1)
+  
+  #calculates number of IQR's away as "score" 
+  out <- abs(pmin((resid-limits[1])/iqr,0) + pmax((resid - limits[2])/iqr,0))
+  
+  #If the point is outside 1.5x the interquartile range, the row is turned to NA
+  dat[which(out > 0), ] <- NA
+  
+  return(dat)
+}
+
+```
+
+
+
+# 1. Dom period of sensors
+
+## 1.1 ORE Al100.1
+```{r}
+# load dom period data
+AL.1_2018 <- read.csv(file = "data/SEEC_FRAM_AL100-1/mar-dec2018_dom_period.csv")
+
+# # filter to range
+# AL.1_2018 <- AL.1_2018 %>%
+# filter(peakY < 30 ) %>%
+#   filter(peakZ < 30 )
+
+
+# not filtering because the outlier removal process worked. Didn't work well for GCD
+
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(1:283, AL.1_2018$peakY,pch=20, col="red") 
+# look at the Z axis
+ points(1:283, AL.1_2018$peakZ, pch=20) 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- AL.1_2018[,c("day","peakY","wpeakY")]
+domZ <- AL.1_2018[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+plot(dat$day, (dat$value/10), xlab="Day of year",ylab="Dominant period")
+points(dat2$day, (dat2$value/10), pch=20, col="purple")
+ 
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+# save csv for plotting
+# write.csv(dat2, file= "data/clean_data_for_figures/ORE1_outlier_clean.csv")
+
+#Set starting parameters (what do these mean in the model fit??)
+m <- c(20, 19, 145, 6, 275, 3, 1)
+
+#Fit non-linear least squares model (this didn't work with my 8 file subset, or with Andy's 5 file subset. Need to set different starting parameters??? Or just try with more data)
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# view the start and end of season as predicted by the model
+sos <- coef(mod)[3] # julian day spring onset = 137 (May 17)
+sos
+soa <- coef(mod)[5] # julian day autumn onset = 292 (Oct 19)
+soa
+
+# save image
+# First, create the path where the image will be named and saved
+png('images/AL100.1/cleaned-AL100.1_2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(150,2.3, paste0("SOS ", format(sos, scientific = F, digits = 3)))
+text(300,2.3, paste0("SOA ", format(soa, scientific = F, digits = 3)))
+text(200,1, paste0("AL100.1_2018"))
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+# save the plot 
+dev.off()
+```
+
+## 1.2 ORE AL100.2-solar
+
+```{r}
+
+AL.2_2018 <- read.csv(file = "data/SEEC_FRAM_AL100-2.solar/jan18-nov18_dom_period.csv")
+
+# # filter to range
+# AL.2_2018 <- AL.2_2018 %>%
+# filter(peakY < 30 & peakY > 10) %>%
+#   filter(peakZ < 30 & peakZ > 10)
+
+# not filtering because the outlier removal process worked. Didn't work well for GCD
+
+
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(1:238, AL.2_2018$peakY,pch=20, col="red") 
+# look at the Z axis
+ points(1:238, AL.2_2018$peakZ, pch=20) 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- AL.2_2018[,c("day","peakY","wpeakY")]
+domZ <- AL.2_2018[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+points(dat2$day, dat2$value, pch=20, col="purple")
+ 
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+# save csv for plotting
+write.csv(dat2, file= "data/clean_data_for_figures/ORE2_outlier_clean.csv")
+
+#Set starting parameters (what do these mean in the model fit??)
+m <- c(20, 19, 145, 6, 275, 3, 1)
+
+#Fit non-linear least squares model (this didn't work with my 8 file subset, or with Andy's 5 file subset. Need to set different starting parameters??? Or just try with more data)
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# view the start and end of season as predicted by the model
+sos <- coef(mod)[3] # julian day spring onset = 135.07 (May 15)
+soa <- coef(mod)[5] # julian day autumn onset = 290.79 (Oct 17)
+
+# save image
+# First, create the path where the image will be named and saved
+png('images/AL100.2-solar//cleaned-AL100.2_2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110,2.5, paste0("SOS ", format(sos, scientific = F, digits = 3)))
+text(300,2.5, paste0("SOA ", format(soa, scientific = F, digits = 3)))
+text(200,1.5, paste0("AL100.2_2018"))
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+# save the plot 
+dev.off()
+
+```
+
+## 1.3 GCD 1.1
+
+```{r}
+
+# use ORE1 data to fill in the curve so we can derive SOS
+
+#import dominant period for 1.1 and 1.2
+s1.1 <- read.csv(file = "data/SEEC_FRAM_GCD1.1/mar.dec18_dom_period_jday.csv")
+s100.1 <- read.csv(file = "data/SEEC_FRAM_AL100-1/J86-319_2018_dom_period.csv")
+
+
+
+# Extract AL100 to the missing gap of Oct 8 to Nov 13 (J 279 - 317)
+s100.1.sub <- s100.1 %>%
+  filter(day > 278 & day < 318)
+
+#filter to same columns
+s1.1 <- s1.1 %>%
+  select(X, peakX, peakY, peakZ, wpeakX, wpeakY, wpeakZ, day)
+
+# Add this slice of data to GCD 1.1
+s1.1int <- rbind(s1.1, s100.1.sub)
+
+s1.1int <- s1.1int %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+  filter(peakZ < 30 & peakZ > 10) 
+
+# re-reun the model and see if SOS, SOA can be estimated
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(1:827, s1.1int$peakY,pch=20, col="red") 
+# look at the Z axis
+ points(1:827, s1.1int$peakZ, pch=20) 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- s1.1int[,c("day","peakY","wpeakY")]
+domZ <- s1.1int[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+points(dat2$day, dat2$value, pch=20, col="purple")
+ 
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+#Set starting parameters (what do these mean in the model fit??)
+m <- c(20, 19, 145, 6, 275, 3, 1)
+
+#Fit non-linear least squares model (this didn't work with my 8 file subset, or with Andy's 5 file subset. Need to set different starting parameters??? Or just try with more data)
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# view the start and end of season as predicted by the model
+sos <- coef(mod)[3] # julian day spring onset = 138.9 (May 17)
+
+```
+
+```{r}
+# try to remove points > 30, < 10
+
+s1.1 <- read.csv(file = "data/SEEC_FRAM_GCD1.1/mar.dec18_dom_period_jday.csv")
+seec1.1_y <- s1.1 %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+  filter(peakZ < 30 & peakZ > 10)
+
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(seec1.1_y$day, seec1.1_y$peakY,pch=20, col="red")
+# look at the Z axis
+ points(seec1.1_y$day, seec1.1_y$peakZ, pch=20) 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- seec1.1_y[,c("day","peakY","wpeakY")]
+domZ <- seec1.1_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+
+
+plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+points(dat2$day, dat2$value, pch=20, col="purple")
+ 
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+
+# save csv for plotting
+write.csv(dat2, file= "data/clean_data_for_figures/GCD1.1_outlier_clean.csv")
+
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=142.5)
+
+
+# SOS = 142.55
+sos <- 142.5
+
+# save image
+# First, create the path where the image will be named and saved
+png('images/SEEC1.1/S1.1_interpolated-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(200, 1, paste0("SEEC1.1_2018"))
+text(125,2.5, paste0("SOS ", format(sos, scientific = F, digits = 3)))
+abline(v=142.5)
+# save the plot 
+dev.off()
+```
+
+## 1.4. GCD 1.2
+
+```{r}
+# load data
+seec1.2_2018 <- read.csv(file = "data/SEEC_FRAM_GCD1.2/gcd1.2_mar_dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# have the julian day be numeric
+seec1.2_2018$day <- as.numeric(seec1.2_2018$day)
+
+#Plotting 
+# look at the Y axis
+plot(seec1.2_2018$day, seec1.2_2018$peakY,pch=20, col="red")
+# look at the Z axis
+ points(seec1.2_2018$day, seec1.2_2018$peakZ, pch=20) 
+ 
+# remove points > 30, < 10 (may need to be more systematic about the 1.5 innerquartile range used in ORE)
+ 
+seec1.2_y <- seec1.2_2018 %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+  filter(peakZ < 30 & peakZ > 10)
+
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(seec1.2_y$day, seec1.2_y$peakY,pch=20, col="red")
+# look at the Z axis
+ points(seec1.2_y$day, seec1.2_y$peakZ, pch=20) 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- seec1.2_y[,c("day","peakY","wpeakY")]
+domZ <- seec1.2_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+points(dat2$day, dat2$value, pch=20, col="purple")
+
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+#testing selecting only 1 dominant period per day
+# take only one dominant period per day with the hightest weight
+dat2$day  <- as.character(dat2$day)
+dat2$day %>%
+  group_by(day) %>%
+  arrange(desc(weights)) 
+
+
+# take only one dominant period per day with the hightest weight
+dat.test <- dat2 %>%
+  group_by(day) %>%
+  dplyr::slice_max(weights, n=1)
+
+dat2 <- dat2 %>%
+  group_by(day) %>%
+  filter(weights == max(weights))
+
+dat.test <- dat2 %>%
+  group_by(day) %>%
+  slice(which.max(weights))
+
+# save csv
+write.csv(dat2, file = "data/clean_data_for_figures/GCD1.2_outlier_clean.csv")
+
+#Set starting parameters (what do these mean in the model fit??) -the 3rd param is the date of start of spring and the 5th is start of fall
+m <- c(20, 19, 145, 6, 345, 3, 1)
+
+#Fit non-linear least squares model 
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# look at the julian day start of spring and start of autumn
+sos <- coef(mod)[3] # 135.7
+soa <- coef(mod)[5] # 293.1
+
+# save image
+# First, create the path where the image will be named and saved
+png('images/SEEC1.2/S1.2_cleaned-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(125,2.5, paste0("SOS ", format(sos, scientific = F, digits = 3)))
+text(300,2.5, paste0("SOA ", format(soa, scientific = F, digits = 3)))
+text(200,1, paste0("SEEC1.2_2018"))
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+# save the plot 
+dev.off()
+
+```
+
+## 1.5 GCD 2.1 
+```{r}
+# load data
+seec2.1_2018 <- read.csv(file = "data/SEEC_FRAM_GCD2.1/gcd2.1_mar_dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# have the julian day be numeric
+seec2.1_2018$day <- as.numeric(seec2.1_2018$day)
+
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(seec2.1_2018$day, seec2.1_2018$peakY,pch=20, col="red")
+# look at the Z axis
+ points(seec2.1_2018$day, seec2.1_2018$peakZ, pch=20) 
+ 
+# try to remove points > 30, < 10
+ 
+seec2.1_y <- seec2.1_2018 %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+  filter(peakZ < 30 & peakZ > 10) 
+
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(seec2.1_y$day, seec2.1_y$peakY,pch=20, col="red")
+# look at the Z axis
+ points(seec2.1_y$day, seec2.1_y$peakZ, pch=20) 
+ 
+ 
+ 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- seec2.1_y[,c("day","peakY","wpeakY")]
+domZ <- seec2.1_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+points(dat2$day, dat2$value, pch=20, col="purple")
+ 
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+# save csv
+write.csv( dat2, file = "data/clean_data_for_figures/GCD2.1_outlier_clean.csv")
+
+#Set starting parameters (what do these mean in the model fit??) -the 3rd param is the date of start of spring and the 5th is start of fall
+m <- c(20, 19, 145, 6, 345, 3, 1)
+
+#Fit non-linear least squares model 
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# look at the julian day start of spring and start of autumn
+sos <- coef(mod)[3] # 138.6
+soa <- coef(mod)[5] # 291.0
+
+# save image
+# First, create the path where the image will be named and saved
+png('images/SEEC2.1/S2.1_cleaned-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110,3, paste0("SOS ", format(sos, scientific = F, digits = 3)))
+text(300,3, paste0("SOA ", format(soa, scientific = F, digits = 3)))
+text(200,1, paste0("SEEC2.1_2018"))
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+# save the plot 
+dev.off()
+```
+
+## 1.6 GCD 2.2 
+```{r}
+
+#import dominant period for 1.1 and 1.2
+s2.2 <- read.csv(file = "data/SEEC_FRAM_GCD2.2/gcd2.2_mar_sep18_dom_period_jday.csv")
+s100.2 <- read.csv(file = "data/SEEC_FRAM_AL100-2.solar/jan18-nov18_dom_period.csv")
+
+
+# Extract GCD 1.2 to the missing gap of Oct 8 to Nov 13 (J 279 - 317)
+s100.2.sub <- s100.2 %>%
+  filter(day > 270)
+
+#filter to same columns
+s2.2 <- s2.2 %>%
+  select(X, peakX, peakY, peakZ, wpeakX, wpeakY, wpeakZ, day)
+
+# Add this slice of data to GCD 1.1
+s2.2int <- rbind(s2.2, s100.2.sub)
+
+s2.2int <- s2.2int %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+  filter(peakZ < 30 & peakY > 10)
+
+# re-reun the model and see if SOS, SOA can be estimated
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(1:356, s2.2int$peakY,pch=20, col="red") 
+# look at the Z axis
+ points(1:356, s2.2int$peakZ, pch=20) 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- s2.2int[,c("day","peakY","wpeakY")]
+domZ <- s2.2int[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+points(dat2$day, dat2$value, pch=20, col="purple")
+ 
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+#Set starting parameters (what do these mean in the model fit??)
+m <- c(20, 19, 145, 6, 275, 3, 1)
+
+#Fit non-linear least squares model (this didn't work with my 8 file subset, or with Andy's 5 file subset. Need to set different starting parameters??? Or just try with more data)
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year", ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# view the start and end of season as predicted by the model
+sos <- coef(mod)[3] # 133.56
+sos
+
+# save image
+# First, create the path where the image will be named and saved
+png('images/SEEC2.2/seec2.2-interpolated.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(150,2.3, paste0("SOS ", format(sos, scientific = F, digits = 3)))
+text(300,2.3, paste0("SOA ", format(soa, scientific = F, digits = 3)))
+text(200,1, paste0("AL100.1_2018"))
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+# save the plot 
+dev.off()
+
+```
+MOdel did converge with just AL100, originaly 133.56
+
+SOS = now 131.8 on 6/29 : 
+
+Create figure without interpolated data but with SOS estimate
+
+```{r}
+
+#import dominant period for 1.1 and 1.2
+s2.2 <- read.csv(file = "data/SEEC_FRAM_GCD2.2/gcd2.2_mar_sep18_dom_period_jday.csv")
+
+#filter to same columns
+s2.2 <- s2.2 %>%
+  select(X, peakX, peakY, peakZ, wpeakX, wpeakY, wpeakZ, day)
+
+s2.2int <- s2.2 %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+  filter(peakZ < 30 & peakZ > 10)
+
+# re-reun the model and see if SOS, SOA can be estimated
+#Plotting (change index to number of files wanting to plot)
+# look at the Y axis
+plot(1:300, s2.2int$peakY,pch=20, col="red") 
+# look at the Z axis
+ points(1:300, s2.2int$peakZ, pch=20) 
+ 
+#Extract y and z axes, and bind them for the functions below
+domY <- s2.2int[,c("day","peakY","wpeakY")]
+domZ <- s2.2int[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+#Plot data, point size is proportional to the weight
+plot(dat$day, dat$value, cex=dat$weights*2, xlab="Day of year",ylab="Dominant period")
+
+## Remove outliers
+#The 'rmOut' function requires a dataframe with three columns named "day","value", and "weights"
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+
+plot(dat$day, dat$value, xlab="Day of year",ylab="Dominant period")
+points(dat2$day, dat2$value, pch=20, col="purple")
+ 
+ # Fitting a phenology growing season model described by Elmore et al. 2012
+
+# The model is a dual logistic curve, with an additional parameter that controls the slope of the line between the two logistic curves. In the plot below, black points are cleaned dominant period values, and red points are fitted values from the model. The two vertical lines are the spring and autumn inflection points of the model.
+
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+# save csv 
+write.csv(dat2, file = "data/clean_data_for_figures/GCD2.2_outlier_clean.csv")
+
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+abline(v=129.2)
+
+# view the start and end of season as predicted by the model
+sos <- 133.56# julian day spring onset = 133.56
+
+
+# save image
+# First, create the path where the image will be named and saved
+png('images/SEEC2.2/seec2.2-interpolated-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(100,2.3, paste0("SOS ", format(sos, scientific = F, digits = 3)))
+abline(v=133.56)
+# save the plot 
+dev.off()
+
+```
+
+
+
+
+
+# 2. Timelapse GCC
+
+## 2.1 Tree 1.1
+
+```{r }
+# Load the ROI data
+load(file = 'phenocam_SEEC1/phenocam_SEEC1_redo/ROI/roi.data.Rdata')
+
+# Show reference image with ROI superimposed on top
+PrintROI(path_img_ref = 'phenocam_SEEC1/phenocam_SEEC1_redo/REF/L__00014.JPG',
+         path_ROIs = 'phenocam_SEEC1/phenocam_SEEC1_redo/ROI/',
+         which = 'all',
+         col = "white")
+
+# Load the VI file created in `extractVIs`. The default name for the file is "VI.data.Rdata"
+load("phenocam_SEEC1/phenocam_SEEC1_redo/VI/VI.data.Rdata")
+
+# Filtering the data will remove images that don't meet certain criteria
+VI_df <- as.data.frame(VI.data$canopy) # To view as dataframe
+
+filter_start_time <- Sys.time()
+filtered_VI <- autoFilter(data = unique(VI.data$canopy), 
+                            dn=c('ri.av', 'gi.av', 'bi.av'), # the names of the columns in the VI.data file that contain the average Red, Green, and Blue (in order) digital numbers 
+                            brt = 'bri.av', # the name of the overall average brightness column. Brightness is the sum of R + G + B digital numbers
+                            filter = c("night", "max"), # The filtering methods used. "Night" removes images below a Green Chromatic Coordinate (GCC) threshold of 0.2. "Max" averages the 90th percentile GCC of a 3-day moving window. The filters are applied in order, which means that in this case, the values of "max.filter" will be the values we want to use in the rest of the analysis
+                            na.fill = FALSE) # TRUE means that NA values are replaced with interpolated values. This should be irrelevant to our data set as we should not have any NA values.
+filter_end_time <- Sys.time()
+filter_processing_time <- filter_end_time - filter_start_time
+
+filtered_VI_df <- convert(filtered_VI, year='2018') %>% 
+    mutate(DATE_POSIX = as.POSIXct(doy, format = "%Y-%m-%d"))
+
+filtered_VI_df <- read.csv(file = "phenocam_SEEC1/phenocam_SEEC1_redo/VI/filtered_VI_df.csv")
+
+filtered_VI_df$DATE_POSIX <- as.POSIXct(filtered_VI_df$doy, format = "%Y-%m-%d")
+
+# plot curve
+ggplot(data = filtered_VI_df, aes(x = DATE_POSIX, y = max.filtered)) +
+    geom_point(color = "forestgreen") +
+    scale_x_datetime(name = "Date",
+                     labels = date_format("%m/%d"), 
+                     date_breaks = "2 weeks",
+                     date_minor_breaks = "1 week") +
+    ylab("Greenness Color Coordinate (GCC)") + 
+    theme_bw(base_size = 18) + 
+    theme(axis.text.x = element_text(angle = 45,
+                                     hjust = 1),
+          plot.title = element_text(size = 20,
+                                    hjust = 0)) +
+    labs(title ="Filtered GCC for Phenocam",
+         subtitle = "Tree1")
+
+## elmore curve + derivatives methods for estimating VIs
+fit_elmore_derivatives1.1 <- greenProcess(ts = filtered_VI$max.filtered,
+                                      fit = 'elmore', 
+                                      threshold = 'trs',
+                                      plot=TRUE)
+
+summary(fit_elmore_derivatives1.1)
+
+# Results:
+## SOS: 134
+## EOS: 279
+## LOS: 145
+
+ # redo on 6/30
+## SOS: 133
+## EOS: 257
+## LOS: 124
+
+```
+
+## 2.2 Tree 2.1
+
+```{r}
+# Load the ROI data
+load(file = 'phenocam_SEEC2/phenocam_SEEC2_redo/ROI/roi.data.Rdata')
+
+# Show reference image with ROI superimposed on top
+PrintROI(path_img_ref = 'phenocam_SEEC2/phenocam_SEEC2_redo/REF/L__00014.JPG',
+         path_ROIs = 'phenocam_SEEC2/phenocam_SEEC2_redo/ROI/',
+         which = 'all',
+         col = "white")
+
+# Load the VI file created in `extractVIs`. The default name for the file is "VI.data.Rdata"
+load("phenocam_SEEC2/phenocam_SEEC2_redo/VI/VI.data.Rdata")
+
+# Filtering the data will remove images that don't meet certain criteria
+VI_df <- as.data.frame(VI.data$canopy) # To view as dataframe
+
+filter_start_time <- Sys.time()
+filtered_VI <- autoFilter(data = unique(VI.data$canopy), 
+                            dn=c('ri.av', 'gi.av', 'bi.av'), # the names of the columns in the VI.data file that contain the average Red, Green, and Blue (in order) digital numbers 
+                            brt = 'bri.av', # the name of the overall average brightness column. Brightness is the sum of R + G + B digital numbers
+                            filter = c("night", "max"), # The filtering methods used. "Night" removes images below a Green Chromatic Coordinate (GCC) threshold of 0.2. "Max" averages the 90th percentile GCC of a 3-day moving window. The filters are applied in order, which means that in this case, the values of "max.filter" will be the values we want to use in the rest of the analysis
+                            na.fill = FALSE) # TRUE means that NA values are replaced with interpolated values. This should be irrelevant to our data set as we should not have any NA values.
+filter_end_time <- Sys.time()
+filter_processing_time <- filter_end_time - filter_start_time
+
+filtered_VI_df <- convert(filtered_VI, year='2018') %>% 
+    mutate(DATE_POSIX = as.POSIXct(doy, format = "%Y-%m-%d"))
+
+filtered_VI_df <- read.csv(file = "phenocam_SEEC2/phenocam_SEEC2_redo/VI/filtered_VI_df.csv")
+
+filtered_VI_df$DATE_POSIX <- as.POSIXct(filtered_VI_df$doy, format = "%Y-%m-%d")
+
+ggplot(data = filtered_VI_df, aes(x = DATE_POSIX, y = max.filtered)) +
+    geom_point(color = "forestgreen") +
+    scale_x_datetime(name = "Date",
+                     labels = date_format("%m/%d"), 
+                     date_breaks = "2 weeks",
+                     date_minor_breaks = "1 week") +
+    ylab("Greenness Color Coordinate (GCC)") + 
+    theme_bw(base_size = 18) + 
+    theme(axis.text.x = element_text(angle = 45,
+                                     hjust = 1),
+          plot.title = element_text(size = 20,
+                                    hjust = 0)) +
+    labs(title ="Filtered GCC for Phenocam",
+         subtitle = "Tree1")
+
+
+#Use derivatives method with the ELmore curve fit to be able to accurately compare with the accelerometer parameters
+
+## elmore curve + derivatives methods for estimating VIs
+fit_elmore_derivatives2.1 <- greenProcess(ts = filtered_VI$max.filtered,
+                                      fit = 'elmore', 
+                                      threshold = 'derivatives',
+                                      plot=FALSE)
+
+summary(fit_elmore_derivatives2.1)
+
+# Results:
+## SOS: 131
+## EOS: 277
+## LOS: 146
+
+
+
+```
+
+## 2.3 Tree 1.2 (Redo 90)
+
+```{r }
+# Load the ROI data
+load(file = 'phenocam_SEEC1/phenocam_SEEC1_redo90/ROI/roi.data.Rdata')
+
+# Show reference image with ROI superimposed on top
+PrintROI(path_img_ref = 'phenocam_SEEC1/phenocam_SEEC1_redo90/REF/L__00014.JPG',
+         path_ROIs = 'phenocam_SEEC1/phenocam_SEEC1_redo90/ROI/',
+         which = 'all',
+         col = "white")
+
+
+# Load the VI file created in `extractVIs`. The default name for the file is "VI.data.Rdata"
+load("phenocam_SEEC1/phenocam_SEEC1_redo90/VI/VI.data.Rdata")
+
+# Filtering the data will remove images that don't meet certain criteria
+VI_df <- as.data.frame(VI.data$canopy) # To view as dataframe
+
+filter_start_time <- Sys.time()
+filtered_VI <- autoFilter(data = unique(VI.data$canopy), 
+                            dn=c('ri.av', 'gi.av', 'bi.av'), # the names of the columns in the VI.data file that contain the average Red, Green, and Blue (in order) digital numbers 
+                            brt = 'bri.av', # the name of the overall average brightness column. Brightness is the sum of R + G + B digital numbers
+                            filter = c("night", "max"), # The filtering methods used. "Night" removes images below a Green Chromatic Coordinate (GCC) threshold of 0.2. "Max" averages the 90th percentile GCC of a 3-day moving window. The filters are applied in order, which means that in this case, the values of "max.filter" will be the values we want to use in the rest of the analysis
+                            na.fill = FALSE) # TRUE means that NA values are replaced with interpolated values. This should be irrelevant to our data set as we should not have any NA values.
+filter_end_time <- Sys.time()
+filter_processing_time <- filter_end_time - filter_start_time
+
+filtered_VI_df <- convert(filtered_VI, year='2018') %>% 
+    mutate(DATE_POSIX = as.POSIXct(doy, format = "%Y-%m-%d"))
+
+
+# Start here if not planning to extract Vegetation Indices (VIs) for > 24 hours
+
+filtered_VI_df <- read.csv(file = "phenocam_SEEC1/phenocam_SEEC1_redo90/VI/filtered_VI_df.csv")
+
+filtered_VI_df$DATE_POSIX <- as.POSIXct(filtered_VI_df$doy, format = "%Y-%m-%d")
+
+#plot
+ggplot(data = filtered_VI_df, aes(x = DATE_POSIX, y = max.filtered)) +
+    geom_point(color = "forestgreen") +
+    scale_x_datetime(name = "Date",
+                     labels = date_format("%m/%d"), 
+                     date_breaks = "2 weeks",
+                     date_minor_breaks = "1 week") +
+    ylab("Greenness Color Coordinate (GCC)") + 
+    theme_bw(base_size = 18) + 
+    theme(axis.text.x = element_text(angle = 45,
+                                     hjust = 1),
+          plot.title = element_text(size = 20,
+                                    hjust = 0)) +
+    labs(title ="Filtered GCC for Phenocam",
+         subtitle = "Tree1")
+
+
+# Use derivatives  method with the ELmore curve fit to be able to accurately compare with the accelerometer parameters
+
+## elmore curve + derivatives methods for estimating VIs
+fit_elmore_derivatives1.2 <- greenProcess(ts = filtered_VI$max.filtered,
+                                      fit = 'elmore', 
+                                      threshold = 'derivatives',
+                                      plot=FALSE)
+
+summary(fit_elmore_derivatives1.2)
+
+# Results:
+## SOS: 134
+## EOS: 280
+## LOS: 146
+
+```
+
+## 2.4 Tree 2.2 (redo90)
+
+```{r }
+# Load the ROI data
+load(file = 'phenocam_SEEC2/phenocam_SEEC2_redo90/ROI/roi.data.Rdata')
+
+# Show reference image with ROI superimposed on top
+PrintROI(path_img_ref = 'phenocam_SEEC2/phenocam_SEEC2_redo90/REF/L__00014.JPG',
+         path_ROIs = 'phenocam_SEEC2/phenocam_SEEC2_redo90/ROI/',
+         which = 'all',
+         col = "white")
+
+# Load the VI file created in `extractVIs`. The default name for the file is "VI.data.Rdata"
+load("phenocam_SEEC2/phenocam_SEEC2_redo90/VI/VI.data.Rdata")
+
+# Filtering the data will remove images that don't meet certain criteria
+VI_df <- as.data.frame(VI.data$canopy) # To view as dataframe
+
+filter_start_time <- Sys.time()
+filtered_VI <- autoFilter(data = unique(VI.data$canopy), 
+                            dn=c('ri.av', 'gi.av', 'bi.av'), # the names of the columns in the VI.data file that contain the average Red, Green, and Blue (in order) digital numbers 
+                            brt = 'bri.av', # the name of the overall average brightness column. Brightness is the sum of R + G + B digital numbers
+                            filter = c("night", "max"), # The filtering methods used. "Night" removes images below a Green Chromatic Coordinate (GCC) threshold of 0.2. "Max" averages the 90th percentile GCC of a 3-day moving window. The filters are applied in order, which means that in this case, the values of "max.filter" will be the values we want to use in the rest of the analysis
+                            na.fill = FALSE) # TRUE means that NA values are replaced with interpolated values. This should be irrelevant to our data set as we should not have any NA values.
+filter_end_time <- Sys.time()
+filter_processing_time <- filter_end_time - filter_start_time
+
+filtered_VI_df <- convert(filtered_VI, year='2018') %>% 
+    mutate(DATE_POSIX = as.POSIXct(doy, format = "%Y-%m-%d"))
+
+# open csv saved in initial analysis
+
+filtered_VI_df <- read.csv(file = "phenocam_SEEC2/phenocam_SEEC2_redo90/VI/filtered_VI_df.csv")
+
+filtered_VI_df$DATE_POSIX <- as.POSIXct(filtered_VI_df$doy, format = "%Y-%m-%d")
+
+# plot
+ggplot(data = filtered_VI_df, aes(x = DATE_POSIX, y = max.filtered)) +
+    geom_point(color = "forestgreen") +
+    scale_x_datetime(name = "Date",
+                     labels = date_format("%m/%d"), 
+                     date_breaks = "2 weeks",
+                     date_minor_breaks = "1 week") +
+    ylab("Greenness Color Coordinate (GCC)") + 
+    theme_bw(base_size = 18) + 
+    theme(axis.text.x = element_text(angle = 45,
+                                     hjust = 1),
+          plot.title = element_text(size = 20,
+                                    hjust = 0)) +
+    labs(title ="Filtered GCC for Phenocam",
+         subtitle = "Tree1")
+
+
+## elmore curve + derivatives methods for estimating VIs
+fit_elmore_derivatives2.2 <- greenProcess(ts = filtered_VI$max.filtered,
+                                      fit = 'elmore', 
+                                      threshold = 'derivatives',
+                                      plot=FALSE)
+
+summary(fit_elmore_derivatives2.2)
+
+# Results:
+## SOS: 130
+## EOS: 278
+## LOS: 146
+
+```
+
+## 2.5 Tree 1.3 (Redo upper)
+
+```{r}
+# Load the ROI data
+load(file = 'phenocam_SEEC1/phenocam_SEEC1_redo90_3up/ROI/roi.data.Rdata')
+
+# Show reference image with ROI superimposed on top
+PrintROI(path_img_ref = 'phenocam_SEEC1/phenocam_SEEC1_redo90_3up/REF/L__00014.JPG',
+         path_ROIs = 'phenocam_SEEC1/phenocam_SEEC1_redo90_3up/ROI/',
+         which = 'all',
+         col = "white")
+
+# Load the VI file created in `extractVIs`. The default name for the file is "VI.data.Rdata"
+load("phenocam_SEEC1/phenocam_SEEC1_redo90_3up/VI/VI.data.Rdata")
+
+# Filtering the data will remove images that don't meet certain criteria
+VI_df <- as.data.frame(VI.data$canopy) # To view as dataframe
+
+filter_start_time <- Sys.time()
+filtered_VI <- autoFilter(data = unique(VI.data$canopy), 
+                            dn=c('ri.av', 'gi.av', 'bi.av'), # the names of the columns in the VI.data file that contain the average Red, Green, and Blue (in order) digital numbers 
+                            brt = 'bri.av', # the name of the overall average brightness column. Brightness is the sum of R + G + B digital numbers
+                            filter = c("night", "max"), # The filtering methods used. "Night" removes images below a Green Chromatic Coordinate (GCC) threshold of 0.2. "Max" averages the 90th percentile GCC of a 3-day moving window. The filters are applied in order, which means that in this case, the values of "max.filter" will be the values we want to use in the rest of the analysis
+                            na.fill = FALSE) # TRUE means that NA values are replaced with interpolated values. This should be irrelevant to our data set as we should not have any NA values.
+filter_end_time <- Sys.time()
+filter_processing_time <- filter_end_time - filter_start_time
+
+filtered_VI_df <- convert(filtered_VI, year='2018') %>% 
+    mutate(DATE_POSIX = as.POSIXct(doy, format = "%Y-%m-%d"))
+
+# Start here if not planning to extract Vegetation Indices (VIs) for > 24 hours
+
+filtered_VI_df <- read.csv(file = "phenocam_SEEC1/phenocam_SEEC1_redo90_3up/VI/filtered_VI_df.csv")
+
+filtered_VI_df$DATE_POSIX <- as.POSIXct(filtered_VI_df$doy, format = "%Y-%m-%d")
+
+# plot
+ggplot(data = filtered_VI_df, aes(x = DATE_POSIX, y = max.filtered)) +
+    geom_point(color = "forestgreen") +
+    scale_x_datetime(name = "Date",
+                     labels = date_format("%m/%d"), 
+                     date_breaks = "2 weeks",
+                     date_minor_breaks = "1 week") +
+    ylab("Greenness Color Coordinate (GCC)") + 
+    theme_bw(base_size = 18) + 
+    theme(axis.text.x = element_text(angle = 45,
+                                     hjust = 1),
+          plot.title = element_text(size = 20,
+                                    hjust = 0)) +
+    labs(title ="Filtered GCC for Phenocam",
+         subtitle = "Tree1")
+
+# Use derivatives  method with the ELmore curve fit to be able to accurately compare with the accelerometer parameters
+
+
+## elmore curve + derivatives methods for estimating VIs
+fit_elmore_derivatives1.3 <- greenProcess(ts = filtered_VI$max.filtered,
+                                      fit = 'elmore', 
+                                      threshold = 'derivatives',
+                                      plot=TRUE)
+
+summary(fit_elmore_derivatives1.3)
+
+# Results:
+## SOS: 135
+## EOS: 279
+## LOS: 144
+
+```
+
+## 2.6 Tree 2 (redo upper)
+
+```{r print-ROI}
+# Load the ROI data
+load(file = 'phenocam_SEEC2/phenocam_SEEC2_redo90_3up/ROI/roi.data.Rdata')
+
+# Show reference image with ROI superimposed on top
+PrintROI(path_img_ref = 'phenocam_SEEC2/phenocam_SEEC2_redo90_3up/REF/L__00014.JPG',
+         path_ROIs = 'phenocam_SEEC2/phenocam_SEEC2_redo90_3up/ROI/',
+         which = 'all',
+         col = "white")
+
+# Load the VI file created in `extractVIs`. The default name for the file is "VI.data.Rdata"
+load("phenocam_SEEC2/phenocam_SEEC2_redo90_3up/VI/VI.data.Rdata")
+
+# Filtering the data will remove images that don't meet certain criteria
+VI_df <- as.data.frame(VI.data$canopy) # To view as dataframe
+
+filter_start_time <- Sys.time()
+filtered_VI <- autoFilter(data = unique(VI.data$canopy), 
+                            dn=c('ri.av', 'gi.av', 'bi.av'), # the names of the columns in the VI.data file that contain the average Red, Green, and Blue (in order) digital numbers 
+                            brt = 'bri.av', # the name of the overall average brightness column. Brightness is the sum of R + G + B digital numbers
+                            filter = c("night", "max"), # The filtering methods used. "Night" removes images below a Green Chromatic Coordinate (GCC) threshold of 0.2. "Max" averages the 90th percentile GCC of a 3-day moving window. The filters are applied in order, which means that in this case, the values of "max.filter" will be the values we want to use in the rest of the analysis
+                            na.fill = FALSE) # TRUE means that NA values are replaced with interpolated values. This should be irrelevant to our data set as we should not have any NA values.
+filter_end_time <- Sys.time()
+filter_processing_time <- filter_end_time - filter_start_time
+
+filtered_VI_df <- convert(filtered_VI, year='2018') %>% 
+    mutate(DATE_POSIX = as.POSIXct(doy, format = "%Y-%m-%d"))
+
+
+#Start here if not planning to extract Vegetation Indices (VIs) for > 24 hours
+
+filtered_VI_df <- read.csv(file = "phenocam_SEEC2/phenocam_SEEC2_redo90_3up/VI/filtered_VI_df.csv")
+
+filtered_VI_df$DATE_POSIX <- as.POSIXct(filtered_VI_df$doy, format = "%Y-%m-%d")
+
+#plot
+ggplot(data = filtered_VI_df, aes(x = DATE_POSIX, y = max.filtered)) +
+    geom_point(color = "forestgreen") +
+    scale_x_datetime(name = "Date",
+                     labels = date_format("%m/%d"), 
+                     date_breaks = "2 weeks",
+                     date_minor_breaks = "1 week") +
+    ylab("Greenness Color Coordinate (GCC)") + 
+    theme_bw(base_size = 18) + 
+    theme(axis.text.x = element_text(angle = 45,
+                                     hjust = 1),
+          plot.title = element_text(size = 20,
+                                    hjust = 0)) +
+    labs(title ="Filtered GCC for Phenocam",
+         subtitle = "Tree1")
+
+
+
+# Use derivatives  method with the ELmore curve fit to be able to accurately compare with the accelerometer parameters
+
+## elmore curve + derivatives methods for estimating VIs
+fit_elmore_derivatives2.3 <- greenProcess(ts = filtered_VI$max.filtered,
+                                      fit = 'elmore', 
+                                      threshold = 'derivatives',
+                                      plot=TRUE)
+
+summary(fit_elmore_derivatives2.3)
+
+# Results:
+## SOS: 131
+## EOS: 277
+## LOS: 146
+
+
+```
+
+## 3. Accel-pheno comparison
+
+```{r load-data}
+
+val.dat2 <- read.csv(file = "data/phenocam_accel_validation6.csv")
+val.dat2$Reading <- as.factor(val.dat2$Reading)
+val.dat2$Tree <- as.factor(val.dat2$Tree)
+val.dat2$Sensor <- as.factor(val.dat2$Sensor)
+
+```
+
+## 3.1 look at t test between all days (lumped SOS, SOA, LOS) actual dates, absolute value of differences,t test between actual differences
+
+```{r t-tests}
+
+# look at raw dates between phenocam and accelerometer
+tt.raw.dates <- t.test(Day ~Reading, data =val.dat2, na.action = na.omit)
+tt.raw.dates
+
+# not significant
+
+# filter out length of season because not independent of the SOS and SOA
+ss.val.dat2 <- val.dat2 %>% 
+  filter(Phenophase != "LOS")
+
+# look at raw dates between phenocam and accelerometer
+tt.raw.dates <- t.test(Day ~Reading, data =ss.val.dat2, na.action = na.omit)
+tt.raw.dates
+
+# still not significant
+
+# look at SOS only
+sos.val.dat2 <- val.dat2 %>% 
+  filter(Phenophase == "SOS")
+
+# look at raw dates between phenocam and accelerometer
+tt.raw.dates <- t.test(Day ~Reading, data =sos.val.dat2, na.action = na.omit)
+tt.raw.dates
+
+# not quite significant
+
+# look at SOA only
+soa.val.dat2 <- val.dat2 %>% 
+  filter(Phenophase == "SOA")
+
+# look at raw dates between phenocam and accelerometer
+tt.raw.dates <- t.test(Day ~Reading, data =soa.val.dat2, na.action = na.omit)
+tt.raw.dates
+
+# significant--- but each sample isn't independent, so likley need to use means/sds
+
+```
+
+## 3.2 Calc Means and SDs by sensor type
+
+```{r}
+ 
+ by_day <- val.dat2 %>% 
+  group_by(Phenophase, Reading, Tree) %>%
+  summarise(mean_VI= mean(Day, na.rm = TRUE), sd_VI = sd(Day, na.rm = TRUE)) 
+
+# write csv
+write.csv(by_day, file = "data/validation_means_sds_byday.csv")
+
+ val.dat2 %>% 
+  group_by(Phenophase, Reading) %>%
+  summarise(mean_VI= mean(Day, na.rm = TRUE), sd_VI = sd(Day, na.rm = TRUE)) %>% 
+
+ 
+ 
+
+```
+
+## 3.3 scatterplot of julian dates timelapse accel comparison
+```{r}
+
+# group by sensor, method and tree
+  val.dat.t  <- val.dat2 %>% 
+  group_by(Phenophase, Reading, Tree) %>%
+  summarise(mean_VI= mean(Day, na.rm = TRUE), sd_VI = sd(Day, na.rm = TRUE)) %>% 
+  mutate(tree_sensor = paste0(Reading, Tree))
+  
+  # plot trees and sensors separately
+val.dat.t$Phenophase <- ordered(val.dat.t$Phenophase, levels = c("SOS", "SOA", "LOS"))
+
+ # plot trees and sensors separately
+val.dat.t$tree_sensor <- ordered(val.dat.t$tree_sensor, levels = c("Accelerometer1", "PhenoCam1", "Accelerometer2", "PhenoCam2"))
+
+# scatterplot looking at trees and methods
+
+ val.dat.t %>%    
+   ggplot(aes(x= tree_sensor, y = mean_VI)) +
+  geom_point() +
+    geom_errorbar(aes(ymin = (mean_VI-sd_VI), ymax =  (mean_VI + sd_VI)), width = 0.4)  +
+   ylab("# days") +
+  facet_grid(Phenophase ~ .) +
+   theme_bw() +
+  theme(axis.text.x = element_text(size = 16, angle = 45, hjust = 1), 
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16), 
+        axis.text.y = element_text(size = 16)) +
+   coord_flip()
+ # dev.off()
+ 
+ # remove the LOS and facet, color by phenophase
+
+ png(file = "images/pheno-validation/scatterplots-sensortype_tree.raw.png")
+  val.dat.t %>% 
+    filter(Phenophase != "LOS") %>% 
+   ggplot(aes(x= tree_sensor, y = mean_VI, color = Phenophase)) +
+  geom_point() +
+    geom_errorbar(aes(ymin = (mean_VI-sd_VI), ymax =  (mean_VI + sd_VI)), width = 0.4)  +
+   ylab("# days") +
+   theme_bw() +
+  theme(axis.text.x = element_text(size = 16, angle = 45, hjust = 1), 
+        axis.title.x = element_text(size = 16),
+        axis.title.y = element_text(size = 16), 
+        axis.text.y = element_text(size = 16)) +
+   coord_flip()
+  
+  dev.off()
+
+```
+
+
+
+
+# 4. Table 1 Means and Sds for sensors and trees 
+```{r}
+# dat1 <- read.csv(file = "data/phenocam_accel_validation6.csv")
+
+dat1 <- read.csv(file = "data/phenocam_accel_validation8.csv")
+# change sig figs
+options(digits = 7)
+
+
+
+# group by sensors and phenophase AND tree
+table1 <- dat1 %>% 
+  group_by( Phenophase , Reading, Tree) %>% 
+  summarize(mean_Day = mean(Day, na.rm = TRUE), sd_Day = sd(Day, na.rm = TRUE))
+table1
+
+
+# SOS similar between phenocam and accel
+# SOA later for accelerometer
+# LOA longer for accelerometer
+
+
+```
+
+# 5. Table 2 visual comparison
+```{r}
+
+# table 3.1 
+
+# group by sensors and phenophase
+NPN_table <- dat1 %>% 
+  group_by( Phenophase , Reading) %>% 
+  summarize(mean_Day = mean(Day, na.rm = TRUE), sd_Day = sd(Day, na.rm = TRUE))
+NPN_table
+
+
+# unfolding leaves
+NPN_table %>% 
+  filter(Phenophase == "SOS") %>% 
+  mutate(vis_dif = (128-mean_Day))
+
+# 75 leaves
+NPN_table %>% 
+  filter(Phenophase == "SOS") %>% 
+  mutate(vis_dif = (139-mean_Day))
+
+# 50 colored leaves
+NPN_table %>% 
+  filter(Phenophase == "SOA") %>% 
+  mutate(vis_dif = (280.5-mean_Day))
+
+# 100 colored leaves
+NPN_table %>% 
+  filter(Phenophase == "SOA") %>% 
+  mutate(vis_dif = (286.5-mean_Day))
+
+```
+
+
+# 6. Unit comparison
+## 6.1 t.tests and means for unit comparison between opposing axes
+```{r}
+
+
+
+# load data
+AL.1_2018 <- read.csv(file = "data/SEEC_FRAM_AL100-1/mar-dec2018_dom_period.csv")
+AL.2_2018 <- read.csv(file = "data/SEEC_FRAM_AL100-2.solar/jan18-nov18_dom_period.csv")
+seec1.1_2018 <- read.csv(file = "data/SEEC_FRAM_GCD1.1/mar.dec18_dom_period_jday.csv")
+seec1.2_2018 <- read.csv(file = "data/SEEC_FRAM_GCD1.2/gcd1.2_mar_dec18_dom_period_jday.csv")
+seec2.1_2018 <- read.csv(file = "data/SEEC_FRAM_GCD2.1/gcd2.1_mar_dec18_dom_period_jday.csv")
+seec2.2_2018 <- read.csv(file = "data/SEEC_FRAM_GCD2.2/gcd2.2_mar_sep18_dom_period_jday.csv")
+
+
+# filter to the date of the sensor that stopped recording
+t.A1 <- AL.1_2018 %>% 
+  filter(day < 270)
+
+
+
+t.A2 <- AL.2_2018 %>% 
+  filter(day < 270) 
+
+# filter GCD sensors
+
+# y axis 
+
+t.1.1.y <- seec1.1_2018 %>% 
+  filter(day < 270) 
+
+
+t.1.2.y <- seec1.2_2018 %>% 
+  filter(day < 270) 
+
+t.2.1.y <- seec2.1_2018 %>% 
+  filter(day < 270) 
+
+t.2.2.y <- seec2.2_2018 %>% 
+  filter(day < 270)
+
+# smmarized
+# summarize by day (so there is only 1 dom period per julian day) for mean peak Y
+t.1.1.y <- t.1.1.y %>%
+  group_by(day) %>%
+  summarize(t.1.1.y = mean(peakY, na.rm = TRUE))
+
+
+t.1.2.y <- t.1.2.y %>%
+  group_by(day) %>%
+  summarize(t.1.2.y = mean(peakY, na.rm = TRUE))
+
+t.2.1.y <- t.2.1.y %>%
+  group_by(day) %>%
+  summarize(t.2.1.y = mean(peakY, na.rm = TRUE))
+
+t.2.2.y <- t.2.2.y %>%
+  group_by(day) %>%
+  summarize(t.2.2.y = mean(peakY, na.rm = TRUE))
+  
+
+# Z axis
+# summarize by day (so there is only 1 dom period per julian day) for mean peak Y
+t.1.1.z <- seec1.1_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.1.1.z = mean(peakZ, na.rm = TRUE))
+
+
+t.1.2.z <- seec1.2_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.1.2.z = mean(peakZ, na.rm = TRUE))
+
+t.2.1.z <- seec2.1_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.2.1.z = mean(peakZ, na.rm = TRUE))
+
+t.2.2.z <- seec2.2_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.2.2.z = mean(peakZ, na.rm = TRUE))
+
+
+# summarize by day (this is probably already summarized by day)
+t.A1.y <- t.A1 %>%
+  group_by(day) %>%
+  summarize(t.A1.y = mean(peakY, na.rm = TRUE))
+
+t.A2.y <- t.A2 %>%
+  group_by(day) %>%
+  summarize(t.A2.y = mean(peakY, na.rm = TRUE))
+
+t.A1.z <- t.A1 %>%
+  group_by(day) %>%
+  summarize(t.A1.z = mean(peakZ, na.rm = TRUE))
+
+t.A2.z <- t.A2 %>%
+  group_by(day) %>%
+  summarize(t.A2.z = mean(peakZ, na.rm = TRUE))
+
+# make sure the same days are being compared
+all.units.y.c <- t.A1.y %>%
+  inner_join(t.A2.y, by = "day") %>%
+  inner_join(t.1.2.y, by = "day") %>%
+  inner_join(t.2.2.y, by = "day")
+
+# make sure the same days are being compared
+all.units.z.c <- t.A1.z %>%
+  inner_join(t.A2.z, by = "day") %>%
+  inner_join(t.1.2.z, by = "day") %>%
+  inner_join(t.2.2.z, by = "day")
+
+#combine y and z data into a dataframe
+all.units.yz <- all.units.y.c %>% 
+  inner_join(all.units.z.c, by = "day")
+
+# look at bivariate plot of the data
+
+png('images/scatterplots_dom_period_comparisons/tree1_unit_cor_OyGz.png')
+all.units.yz %>% 
+  ggplot(aes(x=t.A1.y/10 , y = t.1.2.z/10)) +
+  xlab("ORE-Tree1-yaxis dominant period (s)") +
+  ylab("GCDC-Tree1-z-axis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+theme_classic(base_size = 18)
+dev.off()
+
+# tree 2
+png('images/scatterplots_dom_period_comparisons/tree2_unit_cor_OyGz.png')
+all.units.yz %>% 
+  ggplot(aes(x=t.A2.y/10 , y = t.2.2.z/10)) +
+  xlab("ORE-Tree2-yaxis dominant period (s)") +
+  ylab("GCDC-Tree2-zaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 18)
+dev.off()
+
+png('images/scatterplots_dom_period_comparisons/tree1_unit_cor_OzGy.png')
+all.units.yz %>% 
+  ggplot(aes(x=t.A1.z/10 , y = t.1.2.y/10)) +
+  xlab("ORE-Tree1-zaxis dominant period (s)") +
+  ylab("GCDC-Tree1-yaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 18)
+dev.off()
+
+# tree 2
+png('images/scatterplots_dom_period_comparisons/tree2_unit_cor_OzGy.png')
+all.units.yz %>% 
+  ggplot(aes(x=t.A2.z/10 , y = t.2.2.y/10)) +
+  xlab("ORE-Tree2-zaxis dominant period (s)") +
+  ylab("GCDC-Tree2-yaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 18)
+dev.off()
+
+# split into tree 1 and axis
+all.units.OyGz <- pivot_longer( all.units.yz, cols=c(t.A1.y, t.A2.y, t.1.2.z, t.2.2.z), names_to = "sensor", values_to = "meanpeak")
+all.units.OzGy <- pivot_longer( all.units.yz, cols=c(t.A1.z, t.A2.z, t.1.2.y, t.2.2.y), names_to = "sensor", values_to = "meanpeak")
+
+t1.OyGz <- all.units.OyGz %>%
+  filter(sensor == "t.A1.y" | sensor ==  "t.1.2.z")
+t2.OyGz <- all.units.OyGz %>%
+  filter(sensor == "t.A2.y" | sensor ==  "t.2.2.z")
+t1.OzGy <- all.units.OzGy %>%
+  filter(sensor == "t.A1.z" | sensor ==  "t.1.2.y")
+t2.OzGy <- all.units.OzGy %>%
+  filter(sensor == "t.A2.z" | sensor ==  "t.2.2.y")
+
+
+#  t tests TREE 1
+t1.unit.OyGz <- t.test(meanpeak/10 ~sensor, data = t1.OyGz)
+t1.unit.OyGz
+# GCD z sig higher than ORE y for TREE 1
+
+
+t1.unit.OzGy <- t.test(meanpeak/10 ~sensor, data = t1.OzGy)
+t1.unit.OzGy
+# GCD y sig higher than ORE z for TREE 1
+
+
+t2.unit.OyGz <- t.test(meanpeak/10 ~sensor, data =t2.OyGz)
+t2.unit.OyGz
+# GCD z sig nigher than ORE y for TREE 2
+
+t2.unit.OzGy <- t.test(meanpeak/10 ~sensor, data =t2.OzGy)
+t2.unit.OzGy
+# GCD y sig higher than ORE z for TREE 2
+
+#GCD dom period is still significantly higher than the ORE for comparing ORE axis to GCD axis 
+
+
+
+
+# look at Pearson correlations Tree1, y axis ORE, z axis GCDC
+
+# filter out just the upper sensor
+t1.Oy <- t1.OyGz %>% 
+  filter(sensor == "t.A1.y") 
+t1.Oy <- t1.Oy$meanpeak
+
+# filter the lower sensor
+t1.gz<- t1.OyGz %>% 
+  filter(sensor == "t.1.2.z") 
+t1.gz <- t1.gzw$meanpeak
+
+# t.1.z.cor <- cor.test(t1.peakZ.up, t1.peakZ.low,  method = "pearson")
+# t.1.y.cor
+
+# create dataframe just with the meanpeakZ
+t1.z <-  cbind((t1.peakZ.up/10), (t1.peakZ.low/10))
+t1.z <- as.data.frame(t1.z)
+colnames(t1.z) <- c("t1.z.up", "t1.z.low")
+
+# plot with CIs
+png("images/scatterplots_dom_period_comparisons/tree1-zaxis-pearson.png")
+ggscatter(t1.z, x = "t1.z.low", y = "t1.z.up", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "DP (s) Tree1-lower z-axis", ylab = "DP (s) Tree1-upper z-axis", 
+          cor.coef.size = 10,
+          cor.coef.coord= c(1.2, 2.4),
+          ggtheme= theme_classic(base_size = 25))
+dev.off()
+
+
+
+```
+
+## 6.2 calc the St deviations of dominant periods between units opposing axes
+
+```{r}
+
+# Tree 1
+
+t1.OyGz %>% 
+  group_by(sensor) %>% 
+  summarise(sd_meanpeak = sd(meanpeak)/10)
+
+t1.OzGy %>% 
+  group_by(sensor) %>% 
+  summarise(sd_meanpeak = sd(meanpeak)/10)
+
+
+# Tree 2
+
+t2.OyGz %>% 
+  group_by(sensor) %>% 
+  summarise(sd_meanpeak = sd(meanpeak)/10)
+
+t2.OzGy %>% 
+  group_by(sensor) %>% 
+  summarise(sd_meanpeak = sd(meanpeak)/10)
+
+
+
+
+```
+
+
+
+
+# 7. Height comparison
+
+
+```{r -load-data}
+seec1.1_2018 <- read.csv(file = "data/SEEC_FRAM_GCD1.1/mar.dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+seec1.2_2018 <- read.csv(file = "data/SEEC_FRAM_GCD1.2/gcd1.2_mar_dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+seec2.1_2018 <- read.csv(file = "data/SEEC_FRAM_GCD2.1/gcd2.1_mar_dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+seec2.2_2018 <- read.csv(file = "data/SEEC_FRAM_GCD2.2/gcd2.2_mar_sep18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+```
+
+## 7.1 Height comparisons Y axis- raw data
+
+```{r }
+# summarize by day (so there is only 1 dom period per julian day) for mean peak Y
+t.1.1.y <- seec1.1_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.1.1.y = mean(peakY, na.rm = TRUE))
+
+
+t.1.2.y <- seec1.2_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.1.2.y = mean(peakY, na.rm = TRUE))
+
+t.2.1.y <- seec2.1_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.2.1.y = mean(peakY, na.rm = TRUE))
+
+t.2.2.y <- seec2.2_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.2.2.y = mean(peakY, na.rm = TRUE))
+  
+# make sure the same days are being compared
+t.all.y <- t.1.2.y %>%
+  inner_join(t.1.1.y, by = "day") %>%
+  inner_join(t.2.1.y, by = "day") %>%
+  inner_join(t.2.2.y, by = "day")
+
+
+# separate  the wider table into longer : https://mgimond.github.io/ES218/Week03b.html
+
+t1_2.peakY <- pivot_longer(t.all.y, cols=c(t.1.1.y, t.1.2.y, t.2.1.y, t.2.2.y), names_to = "sensor", values_to = "meanpeakY")
+
+# make sensor a factor
+t1_2.peakY$sensor <- as.factor(t1_2.peakY$sensor)
+
+# split into tree 1 and tree 2
+t1.peakY <- t1_2.peakY %>%
+  filter(sensor == "t.1.1.y" | sensor ==  "t.1.2.y")
+t2.peakY <- t1_2.peakY %>%
+  filter(sensor == "t.2.1.y" | sensor ==  "t.2.2.y")
+
+# look at bivariate plot of the data
+png('images/boxplots_dom_period_comparisons/tree1_up_low_cor_peakY.png')
+t.all.y %>% 
+  ggplot(aes(x=t.1.2.y/10 , y = t.1.1.y/10)) +
+   xlab("GCDC-Tree1-lower-yaxis dominant period (s)") +
+  ylab("GCDC-Tree1-upper-yaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 18)
+dev.off()
+
+png('images/boxplots_dom_period_comparisons/tree2_up_low_cor_peakY.png')
+t.all.y %>% 
+  ggplot(aes(x=t.2.1.y/10 , y = t.2.2.y/10)) +
+    xlab("GCDC-Tree2-lower-yaxis dominant period (s)") +
+  ylab("GCDC-Tree2-upper-yaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic( base_size = 18)
+dev.off()
+
+# make sure same # dates so they are alligned
+t1.test.y <- t.test(meanpeakY/10 ~sensor, data = t1.peakY)
+t1.test.y
+t2.test.y <- t.test(meanpeakY/10 ~sensor, data = t2.peakY)
+t2.test.y
+
+# Look at standard deviation
+t1.peakY %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakY)/10)
+
+# tree 2
+t2.peakY %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakY)/10)
+
+# For PeakY:
+# Tree 1 and 2 were not significantly different between upper and lower for paired or unpaired t test
+  
+```
+
+
+# 7.2 Height comparisons Z axis -raw data
+
+```{r}
+# summarize by day (so there is only 1 dom period per julian day) for mean peak Y
+t.1.1.z <- seec1.1_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.1.1.z = mean(peakZ, na.rm = TRUE))
+
+t.1.1.z <- seec1.1_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.1.1.z = mean(peakZ, na.rm = TRUE))
+
+
+t.1.2.z <- seec1.2_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.1.2.z = mean(peakZ, na.rm = TRUE))
+
+t.1.2.z <- seec1.2_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.1.2.z = mean(peakZ, na.rm = TRUE))
+
+t.2.1.z <- seec2.1_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.2.1.z = mean(peakZ, na.rm = TRUE))
+
+t.2.1.z <- seec2.1_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.2.1.z = mean(peakZ, na.rm = TRUE))
+
+
+t.2.2.z <- seec2.2_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.2.2.z = mean(peakZ, na.rm = TRUE))
+
+t.2.2.z <- seec2.2_2018 %>% 
+  filter(day < 270) %>%
+  group_by(day) %>%
+  summarize(t.2.2.z = mean(peakZ, na.rm = TRUE))
+  
+# make sure the same days are being compared
+t.all.z <- t.1.2.z %>%
+  inner_join(t.1.1.z, by = "day") %>%
+  inner_join(t.2.1.z, by = "day") %>%
+  inner_join(t.2.2.z, by = "day")
+
+
+# separate  the wider table into longer : https://mgimond.github.io/ES218/Week03b.html
+
+t1_2.peakZ <- pivot_longer(t.all.z, cols=c(t.1.1.z, t.1.2.z, t.2.1.z, t.2.2.z), names_to = "sensor", values_to = "meanpeakZ")
+
+# make sensor a factor
+t1_2.peakZ$sensor <- as.factor(t1_2.peakZ$sensor)
+
+# split into tree 1 and tree 2
+t1.peakZ <- t1_2.peakZ %>%
+  filter(sensor == "t.1.1.z" | sensor ==  "t.1.2.z")
+t2.peakZ <- t1_2.peakZ %>%
+  filter(sensor == "t.2.1.z" | sensor ==  "t.2.2.z")
+
+# look at bivariate plot of the data
+
+png('images/boxplots_dom_period_comparisons/tree1_up_low_cor_peakZ.png')
+t.all.z %>% 
+  ggplot(aes(x=t.1.2.z/10 , y = t.1.1.z/10)) +
+  xlab("GCDC-Tree1-lower-zaxis dominant period (s)") +
+  ylab("GCDC-Tree1-upper-zaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 18)
+dev.off()
+
+# tree 2
+png('images/boxplots_dom_period_comparisons/tree2_up_low_cor_peakZ.png')
+t.all.z %>% 
+  ggplot(aes(x=t.2.1.z/10 , y = t.2.2.z/10)) +
+   xlab("GCDC-Tree2-lower-zaxis dominant period (s)") +
+  ylab("GCDC-Tree2-upper-zaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 18)
+dev.off()
+
+## run paired t test on dominant period by day ( http://www.sthda.com/english/wiki/wiki.php?id_contents=7387_)
+
+# make sure same # dates so they are alligned
+t1.test.z <- t.test(meanpeakZ/10 ~sensor, data = t1.peakZ)
+t1.test.z
+t2.test.z <- t.test(meanpeakZ/10 ~sensor, data = t2.peakZ)
+t2.test.z
+
+# Look at standard deviation
+t1.peakZ %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakZ)/10)
+
+# tree 2
+t2.peakZ %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakZ)/10)
+
+#  Trees 1 and 2 are have significantly different upper and lower sensors for peakZ with an unpaired ttest. 
+
+# # 
+# Results: For both the Y and Z axis, the upper sensors have much less variabliilty in dominant period than the lower GCD sensors. There is a significant difference in dominant period for Tree 2. 
+
+```
+
+## 7.3 Height comparisons Y axis- filtered data
+https://rpkgs.datanovia.com/ggpubr/reference/ggscatter.html
+```{r }
+# summarize by day (so there is only 1 dom period per julian day) for mean peak Y
+t.1.1.y <- seec1.1_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakY < 30 & peakY > 10) %>%
+  group_by(day) %>%
+  summarize(t.1.1.y = mean(peakY, na.rm = TRUE))
+
+
+t.1.2.y <- seec1.2_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakY < 30 & peakY > 10) %>%
+  group_by(day) %>%
+  summarize(t.1.2.y = mean(peakY, na.rm = TRUE))
+
+t.2.1.y <- seec2.1_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakY < 30 & peakY > 10) %>%
+  group_by(day) %>%
+  summarize(t.2.1.y = mean(peakY, na.rm = TRUE))
+
+t.2.2.y <- seec2.2_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakY < 30 & peakY > 10) %>%
+  group_by(day) %>%
+  summarize(t.2.2.y = mean(peakY, na.rm = TRUE))
+  
+# make sure the same days are being compared
+t.all.y <- t.1.2.y %>%
+  inner_join(t.1.1.y, by = "day") %>%
+  inner_join(t.2.1.y, by = "day") %>%
+  inner_join(t.2.2.y, by = "day")
+
+
+# separate  the wider table into longer : https://mgimond.github.io/ES218/Week03b.html
+
+t1_2.peakY <- pivot_longer(t.all.y, cols=c(t.1.1.y, t.1.2.y, t.2.1.y, t.2.2.y), names_to = "sensor", values_to = "meanpeakY")
+
+# make sensor a factor
+t1_2.peakY$sensor <- as.factor(t1_2.peakY$sensor)
+
+# split into tree 1 and tree 2
+t1.peakY <- t1_2.peakY %>%
+  filter(sensor == "t.1.1.y" | sensor ==  "t.1.2.y")
+t2.peakY <- t1_2.peakY %>%
+  filter(sensor == "t.2.1.y" | sensor ==  "t.2.2.y")
+
+# look at bivariate plot of the data
+png('images/boxplots_dom_period_comparisons/tree1_up_low_cor_peakY-filter.png')
+t.all.y %>% 
+  ggplot(aes(x=t.1.2.y/10 , y = t.1.1.y/10)) +
+    xlab("GCDC-Tree1-lower-yaxis DP (s)") +
+  ylab("GCDC-Tree1-upper-yaxis DP (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) + 
+  theme_classic(base_size = 25)
+dev.off()
+
+png('images/boxplots_dom_period_comparisons/tree2_up_low_cor_peakY-filter.png')
+t.all.y %>% 
+  ggplot(aes(x=t.2.1.y/10 , y = t.2.2.y/10)) +
+    xlab("GCDC-Tree2-lower-yaxis DP (s)") +
+  ylab("GCDC-Tree2-upper-yaxis DP (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) + 
+  theme_classic(base_size = 25)
+dev.off()
+
+# make sure same # dates so they are alligned
+t1.test.y <- t.test(meanpeakY/10 ~sensor, data = t1.peakY)
+t1.test.y
+t2.test.y <- t.test(meanpeakY/10 ~sensor, data = t2.peakY)
+t2.test.y
+
+# Look at standard deviation
+t1.peakY %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakY)/10)
+
+# tree 2
+t2.peakY %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakY)/10)
+
+# For PeakY:
+# Tree 1 and 2 were not significantly different between upper and lower for paired or unpaired t test
+
+
+# look at Pearson correlations Tree1, y axis
+
+# filter out just the upper sensor
+t1.peakY.up <- t1.peakY %>% 
+  filter(sensor == "t.1.1.y") 
+t1.peakY.up <- t1.peakY.up$meanpeakY
+
+# filter the lower sensor
+t1.peakY.low <- t1.peakY %>% 
+  filter(sensor == "t.1.2.y") 
+t1.peakY.low <- t1.peakY.low$meanpeakY
+
+# t.1.Y.cor <- cor.test(t1.peakY.up, t1.peakY.low,  method = "pearson")
+# t.1.y.cor
+
+# create dataframe just with the meanpeakY
+t1.Y <-  cbind((t1.peakY.up/10), (t1.peakY.low/10))
+t1.Y <- as.data.frame(t1.Y)
+colnames(t1.Y) <- c("t1.Y.up", "t1.Y.low")
+
+# plot with CIs
+png("images/scatterplots_dom_period_comparisons/tree1-Yaxis-pearson.png")
+ggscatter(t1.Y, x = "t1.Y.low", y = "t1.Y.up", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "DP (s) Tree1-lower y-axis", ylab = "DP (s) Tree1-upper y-axis", 
+          cor.coef.size = 10,
+          cor.coef.coord = c(1.1, 2.3),
+          ggtheme= theme_classic(base_size = 25))
+dev.off()
+
+
+# look at Pearson correlations Tree2, y axis
+
+# filter out just the upper sensor
+t2.peakY.up <- t2.peakY %>% 
+  filter(sensor == "t.2.1.y") 
+t2.peakY.up <- t2.peakY.up$meanpeakY
+
+# filter the lower sensor
+t2.peakY.low <- t2.peakY %>% 
+  filter(sensor == "t.2.2.y") 
+t2.peakY.low <- t2.peakY.low$meanpeakY
+
+# t.2.Y.cor <- cor.test(t2.peakY.up, t2.peakY.low,  method = "pearson")
+# t.2.y.cor
+
+# create dataframe just with the meanpeakY
+t2.Y <-  cbind((t2.peakY.up/10), (t2.peakY.low/10))
+t2.Y <- as.data.frame(t2.Y)
+colnames(t2.Y) <- c("t2.Y.up", "t2.Y.low")
+
+# plot with CIs
+png("images/scatterplots_dom_period_comparisons/tree2-Yaxis-pearson.png")
+ggscatter(t2.Y, x = "t2.Y.low", y = "t2.Y.up", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "DP (s) Tree2-lower y-axis", ylab = "DP (s) Tree2-upper y-axis", 
+          cor.coef.size = 10,
+          cor.coef.coord = c(1.1, 2.8),
+          ggtheme= theme_classic(base_size = 25))
+dev.off()
+  
+```
+
+
+# 7.4 Height comparisons Z axis -filtered data
+https://rpkgs.datanovia.com/ggpubr/reference/ggscatter.html
+```{r}
+# summarize by day (so there is only 1 dom period per julian day) for mean peak Y
+t.1.1.z <- seec1.1_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.1.1.z = mean(peakZ, na.rm = TRUE))
+
+t.1.2.z <- seec1.2_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.1.2.z = mean(peakZ, na.rm = TRUE))
+
+t.2.1.z <- seec2.1_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.2.1.z = mean(peakZ, na.rm = TRUE))
+
+t.2.2.z <- seec2.2_2018 %>% 
+  filter(day < 270) %>%
+  filter(peakZ < 30 & peakZ > 10) %>%
+  group_by(day) %>%
+  summarize(t.2.2.z = mean(peakZ, na.rm = TRUE))
+
+# make sure the same days are being compared
+t.all.z <- t.1.2.z %>%
+  inner_join(t.1.1.z, by = "day") %>%
+  inner_join(t.2.1.z, by = "day") %>%
+  inner_join(t.2.2.z, by = "day")
+
+
+# separate  the wider table into longer : https://mgimond.github.io/ES218/Week03b.html
+
+t1_2.peakZ <- pivot_longer(t.all.z, cols=c(t.1.1.z, t.1.2.z, t.2.1.z, t.2.2.z), names_to = "sensor", values_to = "meanpeakZ")
+
+# make sensor a factor
+t1_2.peakZ$sensor <- as.factor(t1_2.peakZ$sensor)
+
+# split into tree 1 and tree 2
+t1.peakZ <- t1_2.peakZ %>%
+  filter(sensor == "t.1.1.z" | sensor ==  "t.1.2.z")
+t2.peakZ <- t1_2.peakZ %>%
+  filter(sensor == "t.2.1.z" | sensor ==  "t.2.2.z")
+
+# look at bivariate plot of the data
+
+png('images/boxplots_dom_period_comparisons/tree1_up_low_cor_peakZ-filter.png')
+t.all.z %>% 
+  ggplot(aes(x=t.1.2.z/10 , y = t.1.1.z/10)) +
+    xlab("GCDC-Tree1-lower-zaxis DP (s)") +
+  ylab("GCDC-Tree1-upper-zaxis DP (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 25)
+dev.off()
+
+# tree 2
+png('images/boxplots_dom_period_comparisons/tree2_up_low_cor_peakZ-filter.png')
+t.all.z %>% 
+  ggplot(aes(x=t.2.2.z/10 , y = t.2.1.z/10)) +
+    xlab("GCDC-Tree2-upper-yaxis dominant period (s)") +
+  ylab("GCDC-Tree2-upper-yaxis dominant period (s)") +
+  geom_point() +
+  geom_abline(slope = 1, col = "red") + 
+  ylim(0, 4) +
+   xlim(0, 4) +
+  theme_classic(base_size = 18)
+dev.off()
+
+## run paired t test on dominant period by day ( http://www.sthda.com/english/wiki/wiki.php?id_contents=7387_)
+
+# make sure same # dates so they are alligned
+t1.test.z <- t.test(meanpeakZ/10 ~sensor, data = t1.peakZ)
+t1.test.z
+t2.test.z <- t.test(meanpeakZ/10 ~sensor, data = t2.peakZ)
+t2.test.z
+
+# Look at standard deviation
+t1.peakZ %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakZ)/10)
+
+# tree 2
+t2.peakZ %>% 
+  group_by(sensor) %>% 
+  summarise( sd_dP = sd(meanpeakZ)/10)
+
+#  Trees 1 and 2 are have significantly different upper and lower sensors for peakZ with an unpaired ttest. 
+
+# # 
+# Results: For both the Y and Z axis, the upper sensors have much less variabliilty in dominant period than the lower GCD sensors. There is a significant difference in dominant period for Tree 2. 
+
+
+
+# look at Pearson correlations Tree1, z axis
+
+# filter out just the upper sensor
+t1.peakZ.up <- t1.peakZ %>% 
+  filter(sensor == "t.1.1.z") 
+t1.peakZ.up <- t1.peakZ.up$meanpeakZ
+
+# filter the lower sensor
+t1.peakZ.low <- t1.peakZ %>% 
+  filter(sensor == "t.1.2.z") 
+t1.peakZ.low <- t1.peakZ.low$meanpeakZ
+
+# t.1.z.cor <- cor.test(t1.peakZ.up, t1.peakZ.low,  method = "pearson")
+# t.1.y.cor
+
+# create dataframe just with the meanpeakZ
+t1.z <-  cbind((t1.peakZ.up/10), (t1.peakZ.low/10))
+t1.z <- as.data.frame(t1.z)
+colnames(t1.z) <- c("t1.z.up", "t1.z.low")
+
+# plot with CIs
+png("images/scatterplots_dom_period_comparisons/tree1-zaxis-pearson.png")
+ggscatter(t1.z, x = "t1.z.low", y = "t1.z.up", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "DP (s) Tree1-lower z-axis", ylab = "DP (s) Tree1-upper z-axis", 
+          cor.coef.size = 10,
+          cor.coef.coord= c(1.2, 2.4),
+          ggtheme= theme_classic(base_size = 25))
+dev.off()
+
+
+# look at Pearson correlations Tree2, z axis (left off repeating analysis for T2 here)
+# filter out just the upper sensor
+t2.peakZ.up <- t2.peakZ %>% 
+  filter(sensor == "t.2.1.z") 
+t2.peakZ.up <- t2.peakZ.up$meanpeakZ
+
+# filter the lower sensor
+t2.peakZ.low <- t2.peakZ %>% 
+  filter(sensor == "t.2.2.z") 
+t2.peakZ.low <- t2.peakZ.low$meanpeakZ
+
+# t.2.z.cor <- cor.test(t2.peakZ.up, t2.peakZ.low,  method = "pearson")
+# t.2.z.cor
+# create dataframe just with the meanpeakZ
+t2.z <-  cbind((t2.peakZ.up/10), (t2.peakZ.low/10))
+t2.z <- as.data.frame(t2.z)
+colnames(t2.z) <- c("t2.z.up", "t2.z.low")
+
+# plot with CIs
+png("images/scatterplots_dom_period_comparisons/tree2-zaxis-pearson.png")
+ggscatter(t2.z, x = "t2.z.low", y = "t2.z.up", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          xlab = "DP (s) Tree2-lower z-axis", ylab = "DP (s) Tree2-upper z-axis", 
+          cor.coef.size = 10,
+          cor.coef.coord= c(1.2, 2.9),
+          ggtheme= theme_classic(base_size = 25))
+dev.off()
+
+```
+
+# 8. Flowering calculations
+
+```{r -load-data}
+AL.1_2018 <- read.csv(file = "data/SEEC_FRAM_AL100-1/mar-dec2018_dom_period.csv")
+AL.2_2018 <- read.csv(file = "data/SEEC_FRAM_AL100-2.solar/jan18-nov18_dom_period.csv")
+seec1.1_2018 <- read.csv(file = "data/SEEC_FRAM_GCD1.1/mar.dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+seec1.2_2018 <- read.csv(file = "data/SEEC_FRAM_GCD1.2/gcd1.2_mar_dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+seec2.1_2018 <- read.csv(file = "data/SEEC_FRAM_GCD2.1/gcd2.1_mar_dec18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+seec2.2_2018 <- read.csv(file = "data/SEEC_FRAM_GCD2.2/gcd2.2_mar_sep18_dom_period_jday.csv", header = TRUE, stringsAsFactors = FALSE)
+
+```
+
+## 8.1 AL.1_2018
+
+```{r}
+
+# have the julian day be numeric
+AL.1_2018$day <- as.numeric(AL.1_2018$day)
+
+# # try to remove points > 30, < 10
+#  AL.1_y <- AL.1_2018 %>% 
+#   filter(peakY < 30 & peakY > 10) %>% 
+#    filter(peakZ < 30 & peakZ > 10)
+ 
+ # try to remove points > 30, < 10
+ AL.1_y <- AL.1_2018 
+ 
+ #Extract y and z axes, and bind them for the functions below
+domY <- AL.1_y[,c("day","peakY","wpeakY")]
+domZ <- AL.1_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+  
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+
+# save image
+# First, create the path where the image will be named and saved
+# png('images/SEEC1.2/S1.2_cleaned-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110, 2.6, "ORE1_2018")
+abline(v= c(139, 110, 120))
+
+# look for max dom period during the pre-peak 110-120
+dat2 %>% 
+    filter(day > 110 & day < 120) %>% 
+  filter(value == max(value))
+# the peak during this period id day 114, dom period 16
+
+```
+
+## 8.2 AL.2_2018
+
+```{r}
+
+# have the julian day be numeric
+AL.2_2018$day <- as.numeric(AL.2_2018$day)
+
+# # try to remove points > 30, < 10
+#  AL.2_y <- AL.2_2018 %>% 
+#   filter(peakY < 30 & peakY > 10) %>% 
+#    filter(peakZ < 30 & peakZ > 10)
+ 
+ # try to remove points > 30, < 10
+ AL.2_y <- AL.2_2018 
+ 
+ #Extract y and z axes, and bind them for the functions below
+domY <- AL.2_y[,c("day","peakY","wpeakY")]
+domZ <- AL.2_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+  
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+#Set starting parameters (what do these mean in the model fit??) -the 3rd param is the date of start of spring and the 5th is start of fall
+m <- c(20, 19, 145, 6, 345, 3, 1)
+
+#Fit non-linear least squares model 
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# save image
+# First, create the path where the image will be named and saved
+# png('images/SEEC1.2/S1.2_cleaned-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110, 2.6, "ORE2_2018")
+abline(v= c(139, 110, 120))
+
+# look for max dom period during the pre-peak 110-120
+dat2 %>% 
+    filter(day > 110 & day < 120) %>% 
+  filter(value == max(value))
+# the peak during this period id day 114, dom period 16
+
+```
+
+
+
+## 8.3 seec1.1_2018
+ 
+```{r}
+# have the julian day be numeric
+seec1.1_2018$day <- as.numeric(seec1.1_2018$day)
+
+# try to remove points > 30, < 10
+ seec1.1_y <- seec1.1_2018 %>%
+  filter(peakY < 30 & peakY > 10) %>%
+   filter(peakZ < 30 & peakZ > 10)
+ 
+ 
+ #Extract y and z axes, and bind them for the functions below
+domY <- seec1.1_y[,c("day","peakY","wpeakY")]
+domZ <- seec1.1_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+  
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+
+# First, create the path where the image will be named and saved
+# png('images/SEEC1.1/S1.1_cleaned-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110, 2.6, "SEEC1.1_2018")
+abline(v= c(139, 110, 120))
+# # save the plot 
+# dev.off()
+
+# look for max dom period during the pre-peak 110-120
+dat2 %>% 
+    filter(day > 110 & day < 120) %>% 
+  filter(value == max(value))
+# the peak during this period id day 114, dom period 16
+
+
+
+```
+
+## 8.4 seec1.2_2018
+ 
+```{r}
+# have the julian day be numeric
+seec1.2_2018$day <- as.numeric(seec1.2_2018$day)
+
+# try to remove points > 30, < 10
+ seec1.2_y <- seec1.2_2018 %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+   filter(peakZ < 30 & peakZ > 10)
+ 
+ #Extract y and z axes, and bind them for the functions below
+domY <- seec1.2_y[,c("day","peakY","wpeakY")]
+domZ <- seec1.2_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+  
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110, 2.6, "SEEC1.2_2018")
+abline(v= c(139, 110, 120))
+# # save the plot 
+# dev.off()
+
+# look for max dom period during the pre-peak 110-120
+dat2 %>% 
+    filter(day > 110 & day < 120) %>% 
+  filter(value == max(value))
+# the peak during this period id day 114, dom period 16
+
+
+
+```
+
+## 8.5 seec2.1_2018
+ 
+```{r}
+# have the julian day be numeric
+seec2.1_2018$day <- as.numeric(seec2.1_2018$day)
+
+# try to remove points > 30, < 10
+ seec2.1_y <- seec2.1_2018 %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+   filter(peakZ < 30 & peakZ > 10)
+ 
+ #Extract y and z axes, and bind them for the functions below
+domY <- seec2.1_y[,c("day","peakY","wpeakY")]
+domZ <- seec2.1_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+  
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+#Set starting parameters (what do these mean in the model fit??) -the 3rd param is the date of start of spring and the 5th is start of fall
+m <- c(20, 19, 145, 6, 345, 3, 1)
+
+#Fit non-linear least squares model 
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# save image
+# First, create the path where the image will be named and saved
+# png('images/SEEC2.1/S2.1_cleaned-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110, 2.6, "SEEC2.1_2018")
+abline(v= c(139, 110, 120))
+# # save the plot 
+# dev.off()
+
+# look for max dom period during the pre-peak 110-120
+dat2 %>% 
+    filter(day > 110 & day < 120) %>% 
+  filter(value == max(value))
+# the peak during this period id day 114, dom period 16
+
+
+
+```
+ 
+## 8.6 seec2.2_2018
+
+```{r}
+# have the julian day be numeric
+seec2.2_2018$day <- as.numeric(seec2.2_2018$day)
+
+# try to remove points > 30, < 10
+ seec2.2_y <- seec2.2_2018 %>% 
+  filter(peakY < 30 & peakY > 10) %>% 
+   filter(peakZ < 30 & peakZ > 10)
+ 
+ #Extract y and z axes, and bind them for the functions below
+domY <- seec2.2_y[,c("day","peakY","wpeakY")]
+domZ <- seec2.2_y[,c("day","peakZ","wpeakZ")]
+colnames(domY) <- c("day","value","weights")
+colnames(domZ) <- c("day","value","weights")
+dat <- rbind(domY,domZ)
+
+## This function, rmOut, identifies and removes points that have residuals beyond 1.5x the interquartile range of a loess curve. In the plot below, points in purple are kept after removing outliers.
+dat2 <- rmOut(dat)
+  
+#Remove NA's from data frame
+dat2 <- na.omit(dat2)
+
+#Set starting parameters (what do these mean in the model fit??) -the 3rd param is the date of start of spring and the 5th is start of fall
+m <- c(20, 19, 145, 6, 345, 3, 1)
+
+#Fit non-linear least squares model 
+mod = nls(value ~ a + (b- g*day)*((1/(1+exp((c-day)/d))) - (1/(1+exp((e-day)/f)))), 
+             start = list(a = m[1],b = m[2],c = m[3], d = m[4], e = m[5], f = m[6], g = m[7] ), 
+             algorithm="port",control = list(maxiter = 500), data=dat2, weights=dat2$weights^2)
+
+#Plot data, and fitted values
+#Units are in tenths of seconds, so divide by 10 to convert to seconds
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+points(dat2$day, fitted(mod)/10, pch=20, col="red", lwd=4)
+abline(v=c(coef(mod)[3],coef(mod)[5]))
+
+# save image
+# First, create the path where the image will be named and saved
+# png('images/SEEC2.2/S2.2_cleaned-2018.png')
+# next paste and run the code for your plot that you want to save
+plot(dat2$day, dat2$value/10, pch=20, xlab="Day of year",ylab="Dominant period (s)")
+text(110, 2.6, "SEEC2.2_2018")
+abline(v= c(139, 110, 120))
+# save the plot 
+# dev.off()
+
+# look for max dom period during the pre-peak 110-120
+dat2 %>% 
+    filter(day > 110 & day < 120) %>% 
+  filter(value == max(value))
+# the peak during this period id day 114, dom period 16
+
+
+```
+
